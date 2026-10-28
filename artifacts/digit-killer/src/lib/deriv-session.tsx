@@ -75,6 +75,7 @@ type DerivSessionValue = {
   switchAccount: (accountId: string) => Promise<void>;
   disconnect: () => void;
   armLiveTrading: (armed: boolean) => void;
+  stopAllEntries: () => void;
   setLiveRiskCaps: (caps: LiveRiskCaps | null) => void;
   buyDigitUnder: (input: {
     symbol: string;
@@ -148,7 +149,6 @@ class DerivTradingSocket {
   private readonly pending = new Map<number, PendingRequest>();
   private readonly tradeIdsByContract = new Map<number, string>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
-  private connected = false;
 
   constructor(
     private readonly url: string,
@@ -173,7 +173,6 @@ class DerivTradingSocket {
           if (settled) return;
           settled = true;
           clearTimeout(timeout);
-          this.connected = true;
           this.onConnectionChange(true);
           this.pingTimer = setInterval(() => {
             if (socket.readyState === WebSocket.OPEN) {
@@ -196,7 +195,6 @@ class DerivTradingSocket {
             clearTimeout(timeout);
             reject(new Error("Deriv closed the trading connection before it was ready."));
           }
-          this.connected = false;
           this.clearPending(new Error("Deriv trading connection closed."));
           this.onConnectionChange(false, "Deriv trading connection closed.");
           this.clearPing();
@@ -218,7 +216,7 @@ class DerivTradingSocket {
     symbol: string;
     barrier: 4 | 5;
     stake: number;
-  }): Promise<DerivTradeRecord> {
+  }, canContinue: () => boolean, onTradeCreated: (trade: DerivTradeRecord) => void): Promise<DerivTradeRecord> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       throw new Error("Choose an account with an active Deriv trading connection first.");
@@ -260,6 +258,9 @@ class DerivTradingSocket {
     if (typeof proposalId !== "string" || !Number.isFinite(askPrice) || askPrice <= 0) {
       throw new Error("Deriv returned an incomplete price proposal.");
     }
+    if (!canContinue()) {
+      throw new Error("Entry was stopped before Deriv submitted the order.");
+    }
 
     const buy = await this.request("buy", {
       buy: proposalId,
@@ -277,6 +278,7 @@ class DerivTradingSocket {
       payout: Number.isFinite(Number(buy.payout)) ? Number(buy.payout) : null,
       status: "open",
     };
+    onTradeCreated(openRecord);
     socket.send(JSON.stringify({
       proposal_open_contract: 1,
       contract_id: contractId,
@@ -291,7 +293,6 @@ class DerivTradingSocket {
     this.clearPending(new Error("Deriv trading connection closed."));
     const socket = this.socket;
     this.socket = null;
-    this.connected = false;
     if (socket) {
       socket.onopen = null;
       socket.onmessage = null;
@@ -351,7 +352,16 @@ class DerivTradingSocket {
       const contract = message.proposal_open_contract as JsonObject;
       const contractId = Number(contract.contract_id);
       const tradeId = this.tradeIdsByContract.get(contractId);
-      if (tradeId) this.onTradeUpdate(tradeId, contract);
+      if (tradeId) {
+        this.onTradeUpdate(tradeId, contract);
+        const status = typeof contract.status === "string" ? contract.status : "";
+        if (
+          contract.is_sold === 1
+          || ["won", "lost", "sold", "cancelled"].includes(status)
+        ) {
+          this.tradeIdsByContract.delete(contractId);
+        }
+      }
     }
 
     const reqId = typeof message.req_id === "number" ? message.req_id : null;
@@ -380,6 +390,11 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
   const appIdRef = useRef(DEFAULT_DERIV_APP_ID);
   const socketRef = useRef<DerivTradingSocket | null>(null);
   const listenersRef = useRef(new Set<(event: DerivTradeEvent) => void>());
+  const tradesRef = useRef<DerivTradeRecord[]>([]);
+  const tradeRequestGeneration = useRef(0);
+  const sessionGeneration = useRef(0);
+  const submissionInFlight = useRef(false);
+  const liveTradingArmedRef = useRef(false);
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [tradeConnectionStatus, setTradeConnectionStatus] =
     useState<TradeConnectionStatus>("disconnected");
@@ -396,15 +411,32 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateTrade = useCallback((trade: DerivTradeRecord, terminal: boolean) => {
-    setTrades((current) => {
-      const index = current.findIndex((item) => item.id === trade.id);
-      if (index < 0) return [trade, ...current].slice(0, 2_000);
-      const next = [...current];
-      next[index] = trade;
-      return next;
-    });
+    const current = tradesRef.current;
+    const index = current.findIndex((item) => item.id === trade.id);
+    const next = index < 0
+      ? [trade, ...current].slice(0, 2_000)
+      : current.map((item) => item.id === trade.id ? trade : item);
+    tradesRef.current = next;
+    setTrades(next);
     emitTrade({ trade, terminal });
   }, [emitTrade]);
+
+  const updateSettledTrade = useCallback((tradeId: string, contract: JsonObject) => {
+    const existing = tradesRef.current.find((item) => item.id === tradeId);
+    if (!existing) return;
+    const rawStatus = typeof contract.status === "string" ? contract.status : "open";
+    const terminal = ["won", "lost", "sold", "cancelled"].includes(rawStatus);
+    const profitValue = Number(contract.profit);
+    const payoutValue = Number(contract.payout);
+    const updated: DerivTradeRecord = {
+      ...existing,
+      status: (terminal ? rawStatus : "open") as DerivTradeStatus,
+      profit: Number.isFinite(profitValue) ? profitValue : existing.profit,
+      payout: Number.isFinite(payoutValue) ? payoutValue : existing.payout,
+      settledAt: terminal ? Date.now() : null,
+    };
+    updateTrade(updated, terminal);
+  }, [updateTrade]);
 
   const connectWithPat = useCallback(async ({ token, appId: requestedAppId }: {
     token: string;
@@ -415,11 +447,16 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     if (!cleanToken) throw new Error("Enter a Deriv personal access token.");
     if (!cleanAppId) throw new Error("Enter your Deriv app ID.");
 
+    const generation = ++sessionGeneration.current;
+    tradeRequestGeneration.current++;
+    liveTradingArmedRef.current = false;
     socketRef.current?.close();
     socketRef.current = null;
     tokenRef.current = null;
     setAccounts([]);
     setActiveAccount(null);
+    tradesRef.current = [];
+    setTrades([]);
     setLiveTradingArmed(false);
     setTradeConnectionStatus("disconnected");
     setStatus("connecting");
@@ -435,6 +472,9 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const payload = await readJson(response);
+      if (generation !== sessionGeneration.current) {
+        throw new Error("This Deriv connection request was superseded.");
+      }
       if (!response.ok) {
         throw new Error(errorMessage(payload, `Deriv account request failed (${response.status}).`));
       }
@@ -449,8 +489,10 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
       setStatus("connected");
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Could not connect to Deriv.";
-      setStatus("disconnected");
-      setError(message);
+      if (generation === sessionGeneration.current) {
+        setStatus("disconnected");
+        setError(message);
+      }
       throw new Error(message);
     }
   }, []);
@@ -466,6 +508,9 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
       throw new Error("Choose an active Deriv account from the loaded account list.");
     }
 
+    const generation = ++sessionGeneration.current;
+    tradeRequestGeneration.current++;
+    liveTradingArmedRef.current = false;
     socketRef.current?.close();
     socketRef.current = null;
     setActiveAccount(null);
@@ -486,6 +531,9 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
         },
       );
       const payload = await readJson(response);
+      if (generation !== sessionGeneration.current) {
+        throw new Error("This Deriv account switch was superseded.");
+      }
       if (!response.ok) {
         throw new Error(errorMessage(payload, `Deriv account authorization failed (${response.status}).`));
       }
@@ -497,29 +545,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
 
       const client = new DerivTradingSocket(
         otpUrl,
-        (tradeId, contract) => {
-          setTrades((current) => {
-            const existing = current.find((item) => item.id === tradeId);
-            if (!existing) return current;
-            const rawStatus = typeof contract.status === "string" ? contract.status : "open";
-            const terminal = ["won", "lost", "sold", "cancelled"].includes(rawStatus);
-            const profitValue = Number(contract.profit);
-            const payoutValue = Number(contract.payout);
-            const updated: DerivTradeRecord = {
-              ...existing,
-              status: (["won", "lost", "sold", "cancelled"].includes(rawStatus)
-                ? rawStatus
-                : "open") as DerivTradeStatus,
-              profit: Number.isFinite(profitValue) ? profitValue : existing.profit,
-              payout: Number.isFinite(payoutValue) ? payoutValue : existing.payout,
-              settledAt: terminal ? Date.now() : null,
-            };
-            const next = [...current];
-            next[current.indexOf(existing)] = updated;
-            emitTrade({ trade: updated, terminal });
-            return next;
-          });
-        },
+        updateSettledTrade,
         (connected, message) => {
           setTradeConnectionStatus(connected ? "connected" : "disconnected");
           if (message) setError(message);
@@ -527,19 +553,29 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
       );
       socketRef.current = client;
       await client.connect();
+      if (generation !== sessionGeneration.current) {
+        client.close();
+        if (socketRef.current === client) socketRef.current = null;
+        throw new Error("This Deriv account switch was superseded.");
+      }
       setActiveAccount(account);
       setTradeConnectionStatus("connected");
     } catch (cause) {
-      socketRef.current?.close();
-      socketRef.current = null;
-      setTradeConnectionStatus("error");
       const message = cause instanceof Error ? cause.message : "Could not authorize the Deriv account.";
-      setError(message);
+      if (generation === sessionGeneration.current) {
+        socketRef.current?.close();
+        socketRef.current = null;
+        setTradeConnectionStatus("error");
+        setError(message);
+      }
       throw new Error(message);
     }
-  }, [accounts, emitTrade, status]);
+  }, [accounts, status, updateSettledTrade]);
 
   const disconnect = useCallback(() => {
+    sessionGeneration.current++;
+    tradeRequestGeneration.current++;
+    liveTradingArmedRef.current = false;
     socketRef.current?.close();
     socketRef.current = null;
     tokenRef.current = null;
@@ -553,7 +589,14 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const armLiveTrading = useCallback((armed: boolean) => {
+    liveTradingArmedRef.current = armed;
     setLiveTradingArmed(armed);
+  }, []);
+
+  const stopAllEntries = useCallback(() => {
+    tradeRequestGeneration.current++;
+    liveTradingArmedRef.current = false;
+    setLiveTradingArmed(false);
   }, []);
 
   const setLiveRiskCaps = useCallback((caps: LiveRiskCaps | null) => {
@@ -567,6 +610,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
       || caps.takeProfit <= 0
     ) {
       setLiveRiskCapsState(null);
+      liveTradingArmedRef.current = false;
       setLiveTradingArmed(false);
       return;
     }
@@ -587,6 +631,15 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     if (!account || !client?.isOpen() || tradeConnectionStatus !== "connected") {
       throw new Error("Choose an account with an active Deriv trading connection first.");
     }
+    if (submissionInFlight.current) {
+      throw new Error("A Deriv order is already being submitted. Wait for it to finish.");
+    }
+    if (tradesRef.current.some((trade) =>
+      trade.accountId === account.account_id
+      && ["proposing", "buying", "open"].includes(trade.status),
+    )) {
+      throw new Error("Wait for the current one-tick contract to settle before submitting another.");
+    }
     if (account.account_type === "real") {
       if (!liveTradingArmed) {
         throw new Error("Confirm and arm live trading before sending real-money orders.");
@@ -601,15 +654,44 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     if (!/^[A-Za-z0-9_]{2,30}$/.test(symbol)) {
       throw new Error("Choose a valid active Deriv market symbol.");
     }
+    if (account.account_type === "real" && liveRiskCaps) {
+      const settled = tradesRef.current.filter((trade) =>
+        trade.accountId === account.account_id
+        && ["won", "lost", "sold", "cancelled"].includes(trade.status),
+      );
+      const profit = settled.reduce((sum, trade) => {
+        if (trade.profit !== null && Number.isFinite(trade.profit)) return sum + trade.profit;
+        if (trade.status === "lost") return sum - trade.stake;
+        if (trade.status === "won" && trade.payout !== null && Number.isFinite(trade.payout)) {
+          return sum + trade.payout - trade.stake;
+        }
+        return sum;
+      }, 0);
+      if (profit <= -liveRiskCaps.stopLoss || profit >= liveRiskCaps.takeProfit) {
+        throw new Error("The configured session loss or profit limit has been reached.");
+      }
+      if (stake > Math.max(0, profit + liveRiskCaps.stopLoss)) {
+        throw new Error("Stake exceeds the remaining session loss limit.");
+      }
+    }
     setError(null);
+    submissionInFlight.current = true;
     try {
-      const trade = await client.buyDigitUnder({ account, symbol, barrier, stake });
-      updateTrade(trade, false);
+      const generation = tradeRequestGeneration.current;
+      const trade = await client.buyDigitUnder(
+        { account, symbol, barrier, stake },
+        () => generation === tradeRequestGeneration.current
+          && socketRef.current === client
+          && (account.account_type !== "real" || liveTradingArmedRef.current),
+        (created) => updateTrade(created, false),
+      );
       return trade;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Deriv could not place the contract.";
       setError(message);
       throw new Error(message);
+    } finally {
+      submissionInFlight.current = false;
     }
   }, [activeAccount, liveRiskCaps, liveTradingArmed, tradeConnectionStatus, updateTrade]);
 
@@ -632,6 +714,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     switchAccount,
     disconnect,
     armLiveTrading,
+    stopAllEntries,
     setLiveRiskCaps,
     buyDigitUnder,
     subscribeTradeEvents,
@@ -649,6 +732,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     switchAccount,
     disconnect,
     armLiveTrading,
+    stopAllEntries,
     setLiveRiskCaps,
     buyDigitUnder,
     subscribeTradeEvents,

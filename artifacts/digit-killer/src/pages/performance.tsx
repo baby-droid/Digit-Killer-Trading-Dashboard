@@ -4,6 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BrainCircuit, Activity, TrendingUp, TrendingDown, Zap, BarChart2, Target, GitBranch, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useDerivSession } from "@/lib/deriv-session";
+import {
+  downloadExcelReport,
+  downloadPdfReport,
+  downloadWordReport,
+  type MarketSummary,
+  type SessionReportRow,
+} from "@/lib/session-report-export";
 
 const ACCENT = "#a855f7";
 
@@ -89,7 +96,7 @@ function evenOddEngine(digits: number[]): DirSignal {
   const zone = pct >= 65 ? "EXTREME" : pct >= 60 ? "STRONG" : "MODERATE";
   return {
     direction: "BUY",
-    label: `🎯 ${dom}`,
+    label: dom,
     reason: `${pct.toFixed(1)}% ${dom.split(" ")[1]} — ${zone} imbalance`,
     confidence: Math.min(90, 50 + (pct - 50) * 3),
   };
@@ -100,15 +107,15 @@ function overUnderEngine(digits: number[], threshold: number): DirSignal {
   const total   = last100.length || 1;
   const overPct  = (last100.filter(d => d > threshold).length / total) * 100;
   const underPct = (last100.filter(d => d < threshold).length / total) * 100;
-  if (overPct >= 57) return { direction: "BUY", label: `🎯 BUY OVER ${threshold}`, reason: `Over-${threshold} rate ${overPct.toFixed(1)}%`, confidence: Math.min(90, 55 + (overPct - 57) * 2) };
-  if (underPct >= 57) return { direction: "BUY", label: `🎯 BUY UNDER ${threshold}`, reason: `Under-${threshold} rate ${underPct.toFixed(1)}%`, confidence: Math.min(90, 55 + (underPct - 57) * 2) };
+  if (overPct >= 57) return { direction: "BUY", label: `BUY OVER ${threshold}`, reason: `Over-${threshold} rate ${overPct.toFixed(1)}%`, confidence: Math.min(90, 55 + (overPct - 57) * 2) };
+  if (underPct >= 57) return { direction: "BUY", label: `BUY UNDER ${threshold}`, reason: `Under-${threshold} rate ${underPct.toFixed(1)}%`, confidence: Math.min(90, 55 + (underPct - 57) * 2) };
   return { direction: "WAIT", label: "⏳ No edge", reason: `O:${overPct.toFixed(1)}% U:${underPct.toFixed(1)}%`, confidence: 40 };
 }
 
 function upsDownsEngine(digits: number[]): DirSignal {
   const mom = momentumEngine(digits);
-  if (mom.dir === "UP"   && mom.strength >= 70) return { direction: "BUY",  label: "🎯 BUY ONLY UPS",   reason: `${mom.strength}% rising momentum in last 8 ticks`,  confidence: mom.strength };
-  if (mom.dir === "DOWN" && mom.strength >= 70) return { direction: "BUY",  label: "🎯 BUY ONLY DOWNS", reason: `${mom.strength}% falling momentum in last 8 ticks`, confidence: mom.strength };
+  if (mom.dir === "UP"   && mom.strength >= 70) return { direction: "BUY",  label: "BUY ONLY UPS",   reason: `${mom.strength}% rising momentum in last 8 ticks`,  confidence: mom.strength };
+  if (mom.dir === "DOWN" && mom.strength >= 70) return { direction: "BUY",  label: "BUY ONLY DOWNS", reason: `${mom.strength}% falling momentum in last 8 ticks`, confidence: mom.strength };
   if (mom.dir === "FLAT") return { direction: "WAIT", label: "⏳ Sideways", reason: "No clear up/down trend", confidence: 30 };
   return { direction: "WAIT", label: "⏳ Moderate trend", reason: `${mom.strength}% ${mom.dir} — needs 70%+ for signal`, confidence: 45 };
 }
@@ -231,7 +238,7 @@ function MissingPanel({ missing }: { missing: { digit: number; since: number }[]
           <div className="flex-1">
             <div className="flex justify-between text-[10px]">
               <span className="font-bold" style={{ color: since >= 20 ? "#ef4444" : "#eab308" }}>
-                {since >= 20 ? "🔥 HIGH PRESSURE" : "⚠️ Building pressure"}
+                {since >= 20 ? "HIGH PRESSURE" : "Building pressure"}
               </span>
               <span className="text-muted-foreground">{since} ticks ago</span>
             </div>
@@ -247,8 +254,15 @@ function MissingPanel({ missing }: { missing: { digit: number; since: number }[]
 
 type ReportTrade = { time?: string | number; account_type?: "demo" | "real"; market?: string; barrier?: number; stake?: number; payout?: number; profit?: number; profit_loss?: number; status?: string; contract_id?: string | number };
 function SessionReportPanel() {
-  const { trades } = useDerivSession();
-  const rows = (trades ?? []) as ReportTrade[];
+  const { trades, subscribeTradeEvents } = useDerivSession();
+  const [, setEventRevision] = useState(0);
+  const subscribeRef = useRef(subscribeTradeEvents);
+  subscribeRef.current = subscribeTradeEvents;
+  useEffect(() => {
+    const unsubscribe = subscribeRef.current(() => setEventRevision((revision) => revision + 1));
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
+  }, []);
+  const rows = (trades ?? []) as unknown as ReportTrade[];
   const settled = rows.filter((trade) => ["won", "lost", "win", "loss"].includes(String(trade.status ?? "").toLowerCase()));
   const wins = settled.filter((trade) => ["won", "win"].includes(String(trade.status ?? "").toLowerCase())).length;
   const losses = settled.length - wins;
@@ -279,7 +293,7 @@ function SessionReportPanel() {
       </div>
       <div className="mt-4 grid gap-4 md:grid-cols-[.8fr_1fr]">
         <div className="grid grid-cols-3 gap-2">
-          {[["Settled", settled.length, "text-foreground"], ["Wins", wins, "text-emerald-300"], ["Losses", losses, "text-rose-300"]].map(([label, value, color]) => <div key={String(label)} className="rounded-lg border border-border bg-background/50 p-3"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-xl font-bold ${color}`}>{value}</p></div>)}
+          {([["Settled", settled.length, "text-foreground"], ["Wins", wins, "text-emerald-300"], ["Losses", losses, "text-rose-300"]] as const).map(([label, value, color]) => <div key={label} className="rounded-lg border border-border bg-background/50 p-3"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-xl font-bold ${color}`}>{value}</p></div>)}
           <div className="col-span-3 rounded-lg border border-border bg-background/50 p-3">
             <p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Win / loss distribution</p>
             <div className="flex h-2 overflow-hidden rounded-full bg-rose-400/70" aria-label={`${wins} wins, ${losses} losses`} data-testid="chart-win-loss"><div className="bg-emerald-400" style={{ width: `${settled.length ? wins / settled.length * 100 : 0}%` }} /></div>
@@ -398,7 +412,7 @@ export default function Performance() {
                     {mdSignal.matches.digit}
                   </div>
                   <div>
-                    <div className="font-bold text-sm text-purple-300">🎯 Digit {mdSignal.matches.digit}</div>
+                    <div className="font-bold text-sm text-purple-300">Digit {mdSignal.matches.digit}</div>
                     <div className="text-[10px] text-muted-foreground">{mdSignal.matches.label}</div>
                   </div>
                   <ConfBadge conf={mdSignal.matches.confidence} />
@@ -418,7 +432,7 @@ export default function Performance() {
                     {mdSignal.differs.digit}
                   </div>
                   <div>
-                    <div className="font-bold text-sm text-sky-300">🚫 Digit {mdSignal.differs.digit}</div>
+                    <div className="font-bold text-sm text-sky-300">Digit {mdSignal.differs.digit}</div>
                     <div className="text-[10px] text-muted-foreground">{mdSignal.differs.label}</div>
                   </div>
                   <ConfBadge conf={mdSignal.differs.confidence} />

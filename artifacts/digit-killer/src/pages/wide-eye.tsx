@@ -249,7 +249,7 @@ function computeSignal(recent: number[], evenPct: number, oddPct: number): Signa
   if (eStr.slice(-3) === "OEE" && oddPct > 55) {
     return {
       action: "BUY_ODD",
-      label: "🎯 ENTER NOW — BUY ODD",
+      label: "ENTER NOW — BUY ODD",
       reason: `Pattern O→EE (odd absorption) · Odd ${oddPct.toFixed(1)}% ${zone ? `· ${zone} imbalance` : ""} (Ch 9/10)`,
       accentColor: "#ef4444",
     };
@@ -259,7 +259,7 @@ function computeSignal(recent: number[], evenPct: number, oddPct: number): Signa
   if (eStr.slice(-3) === "EOO" && evenPct > 55) {
     return {
       action: "BUY_EVEN",
-      label: "🎯 ENTER NOW — BUY EVEN",
+      label: "ENTER NOW — BUY EVEN",
       reason: `Pattern E→OO (even absorption) · Even ${evenPct.toFixed(1)}% ${zone ? `· ${zone} imbalance` : ""} (Ch 9/10)`,
       accentColor: "#22c55e",
     };
@@ -271,7 +271,7 @@ function computeSignal(recent: number[], evenPct: number, oddPct: number): Signa
     const eRun = (eStr.match(/E{2,3}$/)       || [""])[0].length;
     return {
       action: "BUY_EVEN",
-      label: "🎯 ENTER NOW — BUY EVEN",
+      label: "ENTER NOW — BUY EVEN",
       reason: `Pattern ${oRun}× ODD → ${eRun}× EVEN · Even ${evenPct.toFixed(1)}% ${zone ? `· ${zone} zone` : ""} (Ch 10)`,
       accentColor: "#22c55e",
     };
@@ -283,7 +283,7 @@ function computeSignal(recent: number[], evenPct: number, oddPct: number): Signa
     const oRun = (eStr.match(/O{2,3}$/)        || [""])[0].length;
     return {
       action: "BUY_ODD",
-      label: "🎯 ENTER NOW — BUY ODD",
+      label: "ENTER NOW — BUY ODD",
       reason: `Pattern ${eRun}× EVEN → ${oRun}× ODD · Odd ${oddPct.toFixed(1)}% ${zone ? `· ${zone} zone` : ""} (Ch 10)`,
       accentColor: "#ef4444",
     };
@@ -294,7 +294,7 @@ function computeSignal(recent: number[], evenPct: number, oddPct: number): Signa
     const buyAction = dominant === "ODD" ? "BUY_ODD" : "BUY_EVEN";
     return {
       action: buyAction,
-      label: `🎯 ${zone} SIGNAL — BUY ${dominant}`,
+      label: `${zone} SIGNAL — BUY ${dominant}`,
       reason: `${dominant} at ${domPct.toFixed(1)}% (${zone} imbalance zone, Ch 7) — no pattern yet, watch for entry`,
       accentColor: dominant === "ODD" ? "#ef4444" : "#22c55e",
     };
@@ -379,7 +379,7 @@ function computeOUSignal(digits: number[], threshold: number): OUSignalResult {
     if (d >= threshold) {
       return {
         action: "BUY_UNDER",
-        label: `🎯 ENTER NOW — BUY UNDER ${threshold}`,
+        label: `ENTER NOW — BUY UNDER ${threshold}`,
         reason: `Pattern: ${d},${d},${d} — digit touched ${threshold > 0 ? "at/above" : "at"} barrier 3× · reversal expected · Under ${underPct.toFixed(1)}%`,
         accentColor: "#3b82f6",
       };
@@ -387,7 +387,7 @@ function computeOUSignal(digits: number[], threshold: number): OUSignalResult {
     if (d <= threshold) {
       return {
         action: "BUY_OVER",
-        label: `🎯 ENTER NOW — BUY OVER ${threshold}`,
+        label: `ENTER NOW — BUY OVER ${threshold}`,
         reason: `Pattern: ${d},${d},${d} — digit touched ${threshold < 9 ? "at/below" : "at"} barrier 3× · reversal expected · Over ${overPct.toFixed(1)}%`,
         accentColor: "#ef4444",
       };
@@ -403,7 +403,7 @@ function computeOUSignal(digits: number[], threshold: number): OUSignalResult {
   if (ascStep && tailRepeat && tailHigh && underPct > 40) {
     return {
       action: "BUY_UNDER",
-      label: `🎯 ENTER NOW — BUY UNDER ${threshold}`,
+      label: `ENTER NOW — BUY UNDER ${threshold}`,
       reason: `Pattern: ${last4.join(",")} — ascending cluster high, conservative touch · Under ${underPct.toFixed(1)}%`,
       accentColor: "#3b82f6",
     };
@@ -416,7 +416,7 @@ function computeOUSignal(digits: number[], threshold: number): OUSignalResult {
   if (descStep && tailRepeat && tailLow && overPct > 40) {
     return {
       action: "BUY_OVER",
-      label: `🎯 ENTER NOW — BUY OVER ${threshold}`,
+      label: `ENTER NOW — BUY OVER ${threshold}`,
       reason: `Pattern: ${last4.join(",")} — descending cluster low, conservative touch · Over ${overPct.toFixed(1)}%`,
       accentColor: "#ef4444",
     };
@@ -429,7 +429,7 @@ function computeOUSignal(digits: number[], threshold: number): OUSignalResult {
   if (underPct > 57) {
     return {
       action: "BUY_UNDER",
-      label: `🎯 SIGNAL — BUY UNDER ${threshold}`,
+      label: `SIGNAL — BUY UNDER ${threshold}`,
       reason: `Under-${threshold}: ${underPct.toFixed(1)}% ${zone ? `(${zone} imbalance)` : ""} — statistical edge for under entry`,
       accentColor: "#3b82f6",
     };
@@ -437,7 +437,7 @@ function computeOUSignal(digits: number[], threshold: number): OUSignalResult {
   if (overPct > 57) {
     return {
       action: "BUY_OVER",
-      label: `🎯 SIGNAL — BUY OVER ${threshold}`,
+      label: `SIGNAL — BUY OVER ${threshold}`,
       reason: `Over-${threshold}: ${overPct.toFixed(1)}% ${ozne ? `(${ozne} imbalance)` : ""} — statistical edge for over entry`,
       accentColor: "#ef4444",
     };

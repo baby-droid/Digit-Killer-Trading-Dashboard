@@ -1,17 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldCheck, Unplug, WalletCards, KeyRound, AlertTriangle } from "lucide-react";
-import { useDerivSession } from "@/lib/deriv-session";
+import { DEFAULT_DERIV_APP_ID, useDerivSession } from "@/lib/deriv-session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-const DEFAULT_APP_ID = "34NPKU9CpQPBiUeK2O3S5";
 
 export function DerivAccountCard() {
   const session = useDerivSession();
   const [token, setToken] = useState("");
-  const [appId, setAppId] = useState(session.appId || DEFAULT_APP_ID);
+  const [appId, setAppId] = useState(session.appId || DEFAULT_DERIV_APP_ID);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [preferDemo, setPreferDemo] = useState(false);
+
+  useEffect(() => {
+    if (!preferDemo || !session.accounts.length) return;
+    const demoAccount = session.accounts.find((account) => account.account_type === "demo");
+    if (demoAccount && session.activeAccount?.account_id !== demoAccount.account_id) {
+      void session.switchAccount(demoAccount.account_id);
+    }
+    setPreferDemo(false);
+  }, [preferDemo, session.accounts, session.activeAccount?.account_id, session.switchAccount]);
 
   const connect = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -19,8 +27,9 @@ export function DerivAccountCard() {
     setBusy(true);
     setError("");
     try {
-      await session.connectWithPat({ token: token.trim(), appId: appId.trim() || DEFAULT_APP_ID });
+      await session.connectWithPat({ token: token.trim(), appId: appId.trim() || DEFAULT_DERIV_APP_ID });
       setToken("");
+      setPreferDemo(true);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not connect this Deriv account.");
     } finally {
@@ -29,6 +38,7 @@ export function DerivAccountCard() {
   };
 
   const connected = Boolean(session.activeAccount);
+  const accountsLoaded = session.status === "connected" && session.accounts.length > 0;
   return (
     <section className="rounded-xl border border-border bg-card/90 overflow-hidden" data-testid="deriv-account-panel">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
@@ -62,6 +72,18 @@ export function DerivAccountCard() {
               </select>
               <Button variant="outline" onClick={() => void session.disconnect()} className="w-full gap-2" data-testid="button-deriv-disconnect"><Unplug className="h-4 w-4" /> Disconnect Deriv</Button>
             </>
+          ) : accountsLoaded ? (
+            <>
+              <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                Select an active Deriv account. A demo account is preferred when available.
+              </div>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground" htmlFor="deriv-account-select">Select account</label>
+              <select id="deriv-account-select" value="" onChange={(event) => void session.switchAccount(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" data-testid="select-deriv-account">
+                <option value="" disabled>Choose an account</option>
+                {session.accounts.map((account) => <option key={account.account_id} value={account.account_id}>{account.account_id} · {account.account_type.toUpperCase()} · {account.currency} {Number(account.balance).toFixed(2)}</option>)}
+              </select>
+              <Button variant="outline" onClick={() => void session.disconnect()} className="w-full gap-2" data-testid="button-deriv-disconnect"><Unplug className="h-4 w-4" /> Disconnect Deriv</Button>
+            </>
           ) : (
             <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
               <KeyRound className="mb-2 h-4 w-4 text-primary" />
@@ -69,7 +91,7 @@ export function DerivAccountCard() {
             </div>
           )}
         </div>
-        {!connected && (
+        {!connected && !accountsLoaded && (
           <form onSubmit={connect} className="space-y-3" data-testid="form-deriv-connect">
             <div>
               <label htmlFor="deriv-pat" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Personal Access Token</label>

@@ -13,7 +13,7 @@ import {
   MARKETS, MARKETS_BY_CATEGORY, CATEGORY_LABELS, MarketCategory,
 } from "@/hooks/useDerivWebSocket";
 import { useMarket } from "@/lib/market-context";
-import { useAuth } from "@/lib/auth-context";
+import { useDerivSession } from "@/lib/deriv-session";
 
 const navItems = [
   { name: "Dashboard",       href: "/",               icon: LayoutDashboard },
@@ -49,7 +49,11 @@ const CATEGORY_ICONS: Partial<Record<MarketCategory, React.ReactNode>> = {
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location]          = useLocation();
   const { activeMarket, setActiveMarket } = useMarket();
-  const { session, isAdmin, logout }      = useAuth();
+  const { activeAccount, disconnect } = useDerivSession();
+  const logout = disconnect;
+  const accountLabel = activeAccount
+    ? `${activeAccount.account_type.toUpperCase()} · ${activeAccount.account_id}`
+    : "DERIV ACCOUNT";
   const [activeCategory, setActiveCategory] = useState<MarketCategory>("volatility");
   const [collapsed,   setCollapsed]   = useState(false);
   const [mobileOpen,  setMobileOpen]  = useState(false);
@@ -145,7 +149,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {!collapsed && (
           <div className="px-4 py-2 border-b border-sidebar-border/50 flex items-center justify-between">
             <span className="text-[10px] font-mono text-muted-foreground truncate">
-              {isAdmin ? "👑 ADMIN" : `👤 ${session?.userName ?? "User"}`}
+              {accountLabel}
             </span>
             <div className="flex items-center gap-2 ml-2 flex-shrink-0">
               {/* Sound toggle (sidebar) */}

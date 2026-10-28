@@ -249,10 +249,10 @@ function drawFlyer(signal: GeneratedSignal, logoUrl: string) {
     ctx.fillText(signal.market,W-220,185);
 
     const rows=[
-      {label:"📌  ENTRY POINT",value:signal.entryDigit},
+      {label:"ENTRY POINT",value:signal.entryDigit},
       {label:"⏱  DURATION",value:signal.ticks},
-      {label:"📊  CONFIDENCE",value:`${signal.confidence}%`},
-      {label:"🔍  SIGNAL BASIS",value:signal.reason},
+      {label:"CONFIDENCE",value:`${signal.confidence}%`},
+      {label:"SIGNAL BASIS",value:signal.reason},
       {label:"⏳  VALID FOR",value:"20 MINUTES"},
     ];
     let ry=240;

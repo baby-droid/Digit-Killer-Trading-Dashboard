@@ -412,7 +412,15 @@ export default function Under4Under5Analyser() {
     () => scanCandidates().filter(isHighScoreEntry),
     [scanCandidates],
   );
-  const selectedCandidate = highScoreEntries.find((candidate) => candidate.market.symbol === market?.symbol);
+  const signalCandidates = useMemo(() => scanCandidates().filter((candidate) =>
+    candidate.marketData.isConnected
+    && candidate.marketData.historyLoaded
+    && candidate.marketData.historyCount >= 1000
+    && candidate.pattern.meetsSampleGate
+    && candidate.pattern.sampleCount >= MIN_ENTRY_SAMPLES
+    && candidate.analysis.currentPattern?.pattern === candidate.pattern.pattern,
+  ), [scanCandidates]);
+  const selectedCandidate = signalCandidates.find((candidate) => candidate.market.symbol === market?.symbol);
 
   useEffect(() => {
     const liveKeys = new Set(highScoreEntries.map(entryCandidateKey));
@@ -524,7 +532,8 @@ export default function Under4Under5Analyser() {
 
         <UnderTradeControls
           initialMarket={market?.symbol}
-          autoMarket={highScoreEntries[0]?.market.symbol}
+          autoMarket={signalCandidates[0]?.market.symbol}
+          signalKey={selectedCandidate ? `${selectedCandidate.market.symbol}:${selectedCandidate.barrier}:${selectedCandidate.pattern.pattern}:${selectedCandidate.marketData.historyTicks[selectedCandidate.marketData.historyTicks.length - 1]?.time}` : "no-entry"}
           suggestedBarrier={selectedCandidate?.barrier ?? scanSelection?.barrier}
           entryReady={Boolean(selectedCandidate)}
           score={selectedCandidate?.pattern.averagePerformance ?? null}

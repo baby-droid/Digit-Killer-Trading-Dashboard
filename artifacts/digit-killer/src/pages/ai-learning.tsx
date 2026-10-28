@@ -108,9 +108,9 @@ function generateFlyerCanvas(signal: {
     ctx.fillText(signal.market.toUpperCase(), W - 200, 160);
 
     const items = [
-      { l: "📌  ENTRY", v: signal.entry },
+      { l: "ENTRY", v: signal.entry },
       { l: "⏱  DURATION", v: signal.ticks },
-      { l: "📊  CONFIDENCE", v: `${signal.confidence}%` },
+      { l: "CONFIDENCE", v: `${signal.confidence}%` },
       { l: "⏳  VALID FOR", v: "20 MINUTES" },
     ];
     let ry = 240;
@@ -175,7 +175,7 @@ export default function AILearning() {
     const fileContext = files.map((f) => `[From ${f.name}]: ${f.content.slice(0, 500)}`).join("\n");
     const baseAnswer = findAnswer(input);
     const finalAnswer = fileContext
-      ? `${baseAnswer}\n\n📎 From your uploaded documents:\n${fileContext.slice(0, 300)}...`
+      ? `${baseAnswer}\n\nFrom your uploaded documents:\n${fileContext.slice(0, 300)}...`
       : baseAnswer;
 
     setTimeout(() => {
@@ -201,7 +201,7 @@ export default function AILearning() {
         setMessages((prev) => [...prev, {
           id: "file-" + Date.now(),
           role: "ai",
-          text: `📎 I've received "${file.name}" (${(file.size / 1024).toFixed(1)} KB). I'll use this context when answering your questions. What would you like to know?`,
+          text: `I've received "${file.name}" (${(file.size / 1024).toFixed(1)} KB). I'll use this context when answering your questions. What would you like to know?`,
           timestamp: Date.now(),
         }]);
         scrollToBottom();

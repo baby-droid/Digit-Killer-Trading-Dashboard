@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MarketProvider } from "@/lib/market-context";
-import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { DerivSessionProvider, useDerivSession } from "@/lib/deriv-session";
 import { AppSettingsProvider } from "@/lib/app-settings-context";
 import { Layout } from "@/components/layout";
 import { LoadingScreen } from "@/components/loading-screen";
@@ -40,11 +40,11 @@ const queryClient = new QueryClient({
 });
 
 function AppContent() {
-  const { isAuthenticated } = useAuth();
+  const { activeAccount, status } = useDerivSession();
   const [loading, setLoading] = useState(true);
 
   if (loading) return <LoadingScreen onDone={() => setLoading(false)} />;
-  if (!isAuthenticated) return <Login />;
+  if (status !== "connected" || !activeAccount) return <Login />;
 
   return (
     <Layout>
@@ -80,7 +80,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppSettingsProvider>
-        <AuthProvider>
+        <DerivSessionProvider>
           <MarketProvider>
             <TooltipProvider>
               <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
@@ -89,7 +89,7 @@ function App() {
               <Toaster />
             </TooltipProvider>
           </MarketProvider>
-        </AuthProvider>
+        </DerivSessionProvider>
       </AppSettingsProvider>
     </QueryClientProvider>
   );
