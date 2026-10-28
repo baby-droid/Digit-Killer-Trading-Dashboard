@@ -3,6 +3,7 @@ import { useDerivWebSocket, MARKETS_BY_CATEGORY, CATEGORY_LABELS, MarketCategory
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BrainCircuit, Activity, TrendingUp, TrendingDown, Zap, BarChart2, Target, GitBranch, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { useDerivSession } from "@/lib/deriv-session";
 
 const ACCENT = "#a855f7";
 
@@ -244,6 +245,63 @@ function MissingPanel({ missing }: { missing: { digit: number; since: number }[]
   );
 }
 
+type ReportTrade = { time?: string | number; account_type?: "demo" | "real"; market?: string; barrier?: number; stake?: number; payout?: number; profit?: number; profit_loss?: number; status?: string; contract_id?: string | number };
+function SessionReportPanel() {
+  const { trades } = useDerivSession();
+  const rows = (trades ?? []) as ReportTrade[];
+  const settled = rows.filter((trade) => ["won", "lost", "win", "loss"].includes(String(trade.status ?? "").toLowerCase()));
+  const wins = settled.filter((trade) => ["won", "win"].includes(String(trade.status ?? "").toLowerCase())).length;
+  const losses = settled.length - wins;
+  const markets = Object.entries(settled.reduce<Record<string, number>>((result, trade) => {
+    const name = trade.market ?? "Unknown";
+    result[name] = (result[name] ?? 0) + 1;
+    return result;
+  }, {})).sort((a, b) => b[1] - a[1]);
+  const download = (extension: string, mime: string, content: string) => {
+    const url = URL.createObjectURL(new Blob([content], { type: mime }));
+    const link = document.createElement("a");
+    link.href = url; link.download = `ahmed-syntrader-session.${extension}`; link.click();
+    URL.revokeObjectURL(url);
+  };
+  const columns = ["Time", "Account", "Market", "Barrier", "Stake", "Payout", "Profit / loss", "Status", "Contract ID"];
+  const values = (trade: ReportTrade) => [trade.time ?? "", trade.account_type ?? "", trade.market ?? "", trade.barrier ?? "", trade.stake ?? "", trade.payout ?? "", trade.profit_loss ?? trade.profit ?? "", trade.status ?? "", trade.contract_id ?? ""];
+  const csv = [columns, ...rows.map(values)].map((line) => line.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
+  const html = `<html><head><meta charset="utf-8"></head><body><h1>Ahmed Syntrader — session report</h1><p>Settled: ${settled.length} · Wins: ${wins} · Losses: ${losses}</p><table border="1"><thead><tr>${columns.map((column) => `<th>${column}</th>`).join("")}</tr></thead><tbody>${rows.map((trade) => `<tr>${values(trade).map((value) => `<td>${String(value)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
+  return (
+    <section className="rounded-xl border border-border bg-card p-4 sm:p-5" data-testid="session-report-panel">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-primary">Session reporting</p><h2 className="mt-1 text-lg font-bold">Settled contract history</h2><p className="mt-1 text-xs text-muted-foreground">Win / loss and market distribution from Deriv session records.</p></div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => download("doc", "application/msword;charset=utf-8", html)} className="rounded-md border border-border px-3 py-2 text-xs font-bold hover:border-primary/50" data-testid="button-export-word">Word report</button>
+          <button onClick={() => download("xls", "application/vnd.ms-excel;charset=utf-8", html)} className="rounded-md border border-border px-3 py-2 text-xs font-bold hover:border-primary/50" data-testid="button-export-excel">Excel report</button>
+          <button onClick={() => window.print()} className="rounded-md bg-primary px-3 py-2 text-xs font-bold text-primary-foreground" data-testid="button-export-pdf">Print / save PDF</button>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-[.8fr_1fr]">
+        <div className="grid grid-cols-3 gap-2">
+          {[["Settled", settled.length, "text-foreground"], ["Wins", wins, "text-emerald-300"], ["Losses", losses, "text-rose-300"]].map(([label, value, color]) => <div key={String(label)} className="rounded-lg border border-border bg-background/50 p-3"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-xl font-bold ${color}`}>{value}</p></div>)}
+          <div className="col-span-3 rounded-lg border border-border bg-background/50 p-3">
+            <p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Win / loss distribution</p>
+            <div className="flex h-2 overflow-hidden rounded-full bg-rose-400/70" aria-label={`${wins} wins, ${losses} losses`} data-testid="chart-win-loss"><div className="bg-emerald-400" style={{ width: `${settled.length ? wins / settled.length * 100 : 0}%` }} /></div>
+            <p className="mt-2 text-[10px] text-muted-foreground">{settled.length ? `${((wins / settled.length) * 100).toFixed(1)}% wins in ${settled.length} settled contracts · historical summary, not a forecast` : "No settled contracts in this session yet."}</p>
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-background/50 p-3">
+          <p className="mb-3 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Settled trades by market</p>
+          {markets.length ? <div className="space-y-2">{markets.map(([market, count]) => <div key={market} className="grid grid-cols-[90px_1fr_30px] items-center gap-2 text-[10px]" data-testid={`chart-market-${market}`}><span className="truncate font-mono">{market}</span><span className="h-1.5 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(5, count / Math.max(...markets.map(([, amount]) => amount)) * 100)}%` }} /></span><span className="text-right font-mono text-muted-foreground">{count}</span></div>)}</div> : <p className="py-4 text-xs text-muted-foreground">Market bars appear when settled records arrive.</p>}
+        </div>
+      </div>
+      <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[780px] text-left text-[10px]">
+          <thead className="bg-muted/60 text-[9px] uppercase tracking-wider text-muted-foreground"><tr>{columns.map((column) => <th key={column} className="px-3 py-2 font-semibold">{column}</th>)}</tr></thead>
+          <tbody>{rows.slice(0, 30).map((trade, index) => <tr key={String(trade.contract_id ?? index)} className="border-t border-border/60" data-testid={`row-session-trade-${index}`}>{values(trade).map((value, cell) => <td key={cell} className="px-3 py-2 font-mono">{String(value || "—")}</td>)}</tr>)}</tbody>
+        </table>
+        {!rows.length && <div className="px-4 py-7 text-center text-xs text-muted-foreground">No trade records yet. Connect Deriv and use a one-tick contract to build the session log.</div>}
+      </div>
+    </section>
+  );
+}
+
 /* ── Main page ──────────────────────────────────────────────────────────── */
 export default function Performance() {
   const [selectedMarket, setSelectedMarket] = useState("R_10");
@@ -268,6 +326,7 @@ export default function Performance() {
 
   return (
     <div className="space-y-5 max-w-5xl">
+      <SessionReportPanel />
       <div className="h-0.5 rounded-full -mb-3" style={{ background: `linear-gradient(to right,${ACCENT},transparent)` }} />
 
       {/* Header */}
