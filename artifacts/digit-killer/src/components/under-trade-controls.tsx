@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bot, CircleStop, ShieldAlert, Signal, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, CircleStop, RotateCcw, ShieldAlert, Signal, SlidersHorizontal } from "lucide-react";
 import { useDerivSession, type DerivTradeRecord } from "@/lib/deriv-session";
 import { useDerivMarketCatalog } from "@/hooks/useDerivWebSocket";
 import { Button } from "@/components/ui/button";
 
-type Props = { initialMarket?: string; autoMarket?: string; signalKey?: string; suggestedBarrier?: 4 | 5; entryReady?: boolean; score?: number | null; samples?: number };
-type Settings = { marketMode: "manual" | "auto"; symbol: string; barrier: 4 | 5; stake: number; recovery: number; recoverySteps: number; stopLoss: number; takeProfit: number; delay: number; lossPauseSeconds: number; targetWins: number; threshold: number };
-const defaults: Settings = { marketMode: "manual", symbol: "R_10", barrier: 4, stake: 1, recovery: 1.5, recoverySteps: 2, stopLoss: 10, takeProfit: 10, delay: 0, lossPauseSeconds: 5, targetWins: 5, threshold: 95 };
+type Props = { initialMarket?: string; autoMarket?: string; suggestedBarrier?: 4 | 5; entryReady?: boolean; score?: number | null; samples?: number };
+type Settings = { marketMode: "manual" | "auto"; symbol: string; barrier: 4 | 5; stake: number; recovery: number; recoverySteps: number; stopLoss: number; takeProfit: number; lossPauseSeconds: number; targetWins: number; threshold: number };
+const defaults: Settings = { marketMode: "manual", symbol: "R_10", barrier: 4, stake: 1, recovery: 1.5, recoverySteps: 2, stopLoss: 10, takeProfit: 10, lossPauseSeconds: 5, targetWins: 5, threshold: 95 };
 const storageKey = "dk-under-session-settings-v1";
 const readSettings = (): Settings => {
   try {
@@ -28,27 +28,29 @@ function tradeProfit(trade: DerivTradeRecord) {
   return 0;
 }
 
-export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "entry", suggestedBarrier, entryReady = false, score = null, samples = 0 }: Props) {
+export function UnderTradeControls({ initialMarket, autoMarket, suggestedBarrier, entryReady = false, score = null, samples = 0 }: Props) {
   const session = useDerivSession();
   const catalog = useDerivMarketCatalog();
   const [settings, setSettings] = useState<Settings>(() => ({ ...readSettings(), ...(initialMarket ? { symbol: initialMarket } : {}), ...(suggestedBarrier ? { barrier: suggestedBarrier } : {}) }));
-  const [aiOn, setAiOn] = useState(false);
   const [armed, setArmed] = useState(false);
   const [confirmLive, setConfirmLive] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [lossPauseUntil, setLossPauseUntil] = useState(0);
-  const lastAutoSignal = useRef("");
   const lastLossContract = useRef<string | null>(null);
   const previousAccountId = useRef<string | null>(null);
   const orderInFlight = useRef(false);
-  const signalKeyRef = useRef(signalKey);
   const lossPauseSecondsRef = useRef(settings.lossPauseSeconds);
-  signalKeyRef.current = signalKey;
   lossPauseSecondsRef.current = settings.lossPauseSeconds;
+  const resetKey = `dk-under-session-reset-v1:${session.activeAccount?.account_id ?? "pending"}`;
+  const [sessionStartedAt, setSessionStartedAt] = useState(() => {
+    const stored = Number(localStorage.getItem(resetKey));
+    return Number.isFinite(stored) && stored > 0 ? stored : Date.now();
+  });
   const real = session.activeAccount?.account_type === "real";
   const accountTrades = session.trades.filter((trade) => trade.accountId === session.activeAccount?.account_id);
-  const settledTrades = accountTrades
+  const sessionTrades = accountTrades.filter((trade) => trade.createdAt >= sessionStartedAt);
+  const settledTrades = sessionTrades
     .filter((trade) => ["won", "lost", "sold", "cancelled"].includes(trade.status))
     .sort((left, right) => (right.settledAt ?? right.createdAt) - (left.settledAt ?? left.createdAt));
   let consecutiveLosses = 0;
@@ -108,9 +110,9 @@ export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "ent
   useEffect(() => { localStorage.setItem(storageKey, JSON.stringify(settings)); }, [settings]);
   useEffect(() => {
     session.setLiveRiskCaps(enabledRiskLimits
-      ? { maxStake, stopLoss: settings.stopLoss, takeProfit: settings.takeProfit }
+      ? { maxStake, stopLoss: settings.stopLoss, takeProfit: settings.takeProfit, sessionStartedAt }
       : null);
-  }, [enabledRiskLimits, maxStake, session.setLiveRiskCaps, settings.stopLoss, settings.takeProfit]);
+  }, [enabledRiskLimits, maxStake, session.setLiveRiskCaps, sessionStartedAt, settings.stopLoss, settings.takeProfit]);
   useEffect(() => {
     session.armLiveTrading(Boolean(
       armed && enabledRiskLimits && session.activeAccount?.account_type === "real" && confirmLive,
@@ -123,12 +125,17 @@ export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "ent
     const accountId = session.activeAccount?.account_id ?? null;
     if (previousAccountId.current && previousAccountId.current !== accountId) {
       setArmed(false);
-      setAiOn(false);
       setConfirmLive(false);
       session.armLiveTrading(false);
     }
     previousAccountId.current = accountId;
   }, [session.activeAccount?.account_id, session.armLiveTrading]);
+  useEffect(() => {
+    const nextKey = `dk-under-session-reset-v1:${session.activeAccount?.account_id ?? "pending"}`;
+    const stored = Number(localStorage.getItem(nextKey));
+    const nextReset = Number.isFinite(stored) && stored > 0 ? stored : Date.now();
+    setSessionStartedAt(nextReset);
+  }, [session.activeAccount?.account_id]);
   useEffect(() => {
     const accountId = session.activeAccount?.account_id;
     if (!accountId) return;
@@ -136,7 +143,6 @@ export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "ent
       if (!terminal || trade.accountId !== accountId || trade.status !== "lost") return;
       if (lastLossContract.current === trade.id) return;
       lastLossContract.current = trade.id;
-      lastAutoSignal.current = signalKeyRef.current;
       const pauseMs = Math.max(0, lossPauseSecondsRef.current) * 1_000;
       setLossPauseUntil(Date.now() + pauseMs);
       if (pauseMs > 0) {
@@ -155,16 +161,6 @@ export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "ent
       setSettings((current) => ({ ...current, symbol: autoMarket, ...(suggestedBarrier ? { barrier: suggestedBarrier } : {}) }));
     }
   }, [settings.marketMode, autoMarket, suggestedBarrier]);
-  useEffect(() => {
-    if (!aiOn || !armed || !signalReady || !canPlaceTrade || lastAutoSignal.current === signalKey) return;
-    if (!session.activeAccount) { setError("Connect a Deriv account before entries can be enabled."); return; }
-    if (real && !confirmLive) { setError("Confirm live mode before enabling real-account entries."); return; }
-    if (!enabledRiskLimits) { setError("Configure valid stake, recovery, stop-loss and take-profit limits first."); return; }
-    lastAutoSignal.current = signalKey;
-    const timer = window.setTimeout(() => { void execute(); }, Math.max(0, settings.delay) * 1000);
-    return () => window.clearTimeout(timer);
-  }, [aiOn, armed, signalReady, canPlaceTrade, session.activeAccount, real, confirmLive, enabledRiskLimits, signalKey, settings.delay, execute]);
-
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings((current) => ({ ...current, [key]: value }));
   const stopAll = () => {
     setArmed(false);
@@ -184,6 +180,15 @@ export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "ent
     setError("");
     setArmed((value) => !value);
   };
+  const resetSession = () => {
+    if (!window.confirm("Reset this page's session totals and start a fresh risk-limit window? Deriv account history is not deleted.")) return;
+    stopAll();
+    const nextReset = Date.now();
+    localStorage.setItem(resetKey, String(nextReset));
+    setSessionStartedAt(nextReset);
+    setLossPauseUntil(0);
+    setError("");
+  };
   const numberField = (key: keyof Settings, label: string, step = "0.01", min = 0, max?: number) => (
     <label className="space-y-1" key={key}><span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</span><input type="number" min={min} max={max} step={step} value={settings[key]} onChange={(event) => update(key, Number(event.target.value) as never)} className="h-9 w-full rounded-md border border-input bg-background px-2.5 font-mono text-sm focus:border-primary focus:outline-none" data-testid={`input-${key}`} /></label>
   );
@@ -193,8 +198,8 @@ export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "ent
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2"><SlidersHorizontal className="h-4 w-4 text-primary" /><h2 className="text-sm font-bold">Under-4 / Under-5 controls</h2><span className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[9px]">1 TICK</span></div>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => setAiOn((value) => !value)} aria-pressed={aiOn} className={`rounded-md border px-3 py-1.5 text-xs font-bold ${aiOn ? "border-primary/50 bg-primary/15 text-primary" : "border-border text-muted-foreground"}`} data-testid="toggle-ai-analyser"><Bot className="mr-1.5 inline h-3.5 w-3.5" />AI analyser {aiOn ? "ON" : "OFF"}</button>
-          <button type="button" onClick={toggleArmed} aria-pressed={armed} className={`rounded-md border px-3 py-1.5 text-xs font-bold ${armed ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-300" : "border-border text-muted-foreground"}`} data-testid="toggle-entry-arming">{armed ? "Entries armed" : "Arm entries"}</button>
+          <span className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground" data-testid="status-ai-analysis">AI signal is analysis only</span>
+          {real && <button type="button" onClick={toggleArmed} aria-pressed={armed} className={`rounded-md border px-3 py-1.5 text-xs font-bold ${armed ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-300" : "border-border text-muted-foreground"}`} data-testid="toggle-entry-arming">{armed ? "Live entries armed" : "Arm live entries"}</button>}
           <Button variant="destructive" size="sm" onClick={stopAll} className="gap-1.5" data-testid="button-stop-all"><CircleStop className="h-4 w-4" />Stop all entry</Button>
         </div>
       </div>
@@ -227,8 +232,12 @@ export function UnderTradeControls({ initialMarket, autoMarket, signalKey = "ent
           {real && <label className="flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-400/5 p-3 text-xs" data-testid="real-account-confirmation"><input type="checkbox" checked={confirmLive} onChange={(event) => { if (event.target.checked) liveToggle(); else setConfirmLive(false); }} className="mt-0.5 accent-amber-400" /><span><b className="text-amber-300">Real account armed confirmation</b><span className="mt-0.5 block text-muted-foreground">Explicit confirmation is required before any real-account entry. Demo remains the recommended default.</span></span></label>}
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
             <span className="text-[10px] text-muted-foreground" data-testid="status-risk-limits"><ShieldAlert className="mr-1 inline h-3.5 w-3.5" />Risk limits {enabledRiskLimits ? "configured" : "incomplete"} · {session.activeAccount?.account_type ?? "demo default"} · P/L {sessionPnl.toFixed(2)}{lossPaused ? " · pause after loss" : ""}</span>
-            <Button onClick={() => void execute()} disabled={!canPlaceTrade} className="min-w-36" data-testid="button-manual-under-trade">{limitsReached ? "Session limit reached" : lossPaused ? "Paused after loss" : hasUnsettledTrade ? "Waiting for settlement" : exposureBlocked ? "Stop-loss budget reached" : busy ? "Submitting…" : `Buy Under ${settings.barrier}`}</Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={resetSession} disabled={busy || hasUnsettledTrade} className="gap-1.5" data-testid="button-reset-under-session"><RotateCcw className="h-3.5 w-3.5" />Reset session</Button>
+              <Button onClick={() => void execute()} disabled={!canPlaceTrade} className="min-w-36" data-testid="button-manual-under-trade">{limitsReached ? "Session limit reached" : lossPaused ? "Paused after loss" : hasUnsettledTrade ? "Waiting for settlement" : exposureBlocked ? "Stop-loss budget reached" : busy ? "Submitting…" : `Buy Under ${settings.barrier}`}</Button>
+            </div>
           </div>
+          <p className="text-[10px] text-muted-foreground">Market selection and signals never submit an order. Every trade requires the Buy button.</p>
           {(error || session.error) && <p role="alert" className="flex items-start gap-2 text-xs text-destructive" data-testid="error-trade-control"><AlertTriangle className="h-4 w-4 shrink-0" />{error || session.error}</p>}
         </div>
       </div>

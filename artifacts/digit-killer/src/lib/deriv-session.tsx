@@ -33,16 +33,28 @@ export type DerivTradeStatus =
   | "cancelled"
   | "error";
 
+export type DerivContractType =
+  | "DIGITMATCH"
+  | "DIGITDIFF"
+  | "DIGITOVER"
+  | "DIGITUNDER"
+  | "DIGITEVEN"
+  | "DIGITODD"
+  | "CALL"
+  | "PUT";
+
 export type DerivTradeRecord = {
   id: string;
   contractId: number | null;
   accountId: string;
   accountType: "demo" | "real";
   market: string;
-  barrier: 4 | 5;
+  contractType: DerivContractType;
+  barrier: number | null;
   stake: number;
   payout: number | null;
   profit: number | null;
+  executionMs: number | null;
   status: DerivTradeStatus;
   createdAt: number;
   settledAt: number | null;
@@ -58,6 +70,7 @@ export type LiveRiskCaps = {
   maxStake: number;
   stopLoss: number;
   takeProfit: number;
+  sessionStartedAt?: number;
 };
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
@@ -78,6 +91,13 @@ type DerivSessionValue = {
   armLiveTrading: (armed: boolean) => void;
   stopAllEntries: () => void;
   setLiveRiskCaps: (caps: LiveRiskCaps | null) => void;
+  buyOneTickContract: (input: {
+    symbol: string;
+    contractType: DerivContractType;
+    barrier?: number;
+    stake: number;
+    triggeredAt?: number;
+  }) => Promise<DerivTradeRecord>;
   buyDigitUnder: (input: {
     symbol: string;
     barrier: 4 | 5;
@@ -212,11 +232,13 @@ class DerivTradingSocket {
     return this.socket?.readyState === WebSocket.OPEN;
   }
 
-  async buyDigitUnder(input: {
+  async buyOneTickContract(input: {
     account: DerivAccount;
     symbol: string;
-    barrier: 4 | 5;
+    contractType: DerivContractType;
+    barrier?: number;
     stake: number;
+    triggeredAt?: number;
   }, canContinue: () => boolean, onTradeCreated: (trade: DerivTradeRecord) => void): Promise<DerivTradeRecord> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -224,6 +246,10 @@ class DerivTradingSocket {
     }
     if (!Number.isFinite(input.stake) || input.stake <= 0) {
       throw new Error("Stake must be greater than zero.");
+    }
+    const needsBarrier = ["DIGITMATCH", "DIGITDIFF", "DIGITOVER", "DIGITUNDER"].includes(input.contractType);
+    if (needsBarrier && (!Number.isInteger(input.barrier) || input.barrier! < 0 || input.barrier! > 9)) {
+      throw new Error("This digit contract requires a barrier from 0 to 9.");
     }
 
     const tradeId = `${Date.now()}-${this.nextRequestId}`;
@@ -233,26 +259,30 @@ class DerivTradingSocket {
       accountId: input.account.account_id,
       accountType: input.account.account_type,
       market: input.symbol,
-      barrier: input.barrier,
+      contractType: input.contractType,
+      barrier: needsBarrier ? input.barrier! : null,
       stake: input.stake,
       payout: null,
       profit: null,
+      executionMs: null,
       status: "proposing",
       createdAt: Date.now(),
       settledAt: null,
     };
 
-    const proposal = await this.request("proposal", {
+    const requestStartedAt = input.triggeredAt ?? Date.now();
+    const proposalRequest: JsonObject = {
       proposal: 1,
       amount: input.stake,
       basis: "stake",
-      contract_type: "DIGITUNDER",
-      barrier: String(input.barrier),
+      contract_type: input.contractType,
       currency: input.account.currency,
       underlying_symbol: input.symbol,
       duration: 1,
       duration_unit: "t",
-    });
+    };
+    if (needsBarrier) proposalRequest.barrier = String(input.barrier);
+    const proposal = await this.request("proposal", proposalRequest);
 
     const proposalId = proposal.id;
     const askPrice = Number(proposal.ask_price);
@@ -277,6 +307,7 @@ class DerivTradingSocket {
       ...baseRecord,
       contractId,
       payout: Number.isFinite(Number(buy.payout)) ? Number(buy.payout) : null,
+      executionMs: Math.max(0, Date.now() - requestStartedAt),
       status: "open",
     };
     onTradeCreated(openRecord);
@@ -609,14 +640,18 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     setLiveRiskCapsState(caps);
   }, []);
 
-  const buyDigitUnder = useCallback(async ({
+  const buyOneTickContract = useCallback(async ({
     symbol,
+    contractType,
     barrier,
     stake,
+    triggeredAt,
   }: {
     symbol: string;
-    barrier: 4 | 5;
+    contractType: DerivContractType;
+    barrier?: number;
     stake: number;
+    triggeredAt?: number;
   }) => {
     const account = activeAccount;
     const client = socketRef.current;
@@ -649,6 +684,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     if (account.account_type === "real" && liveRiskCaps) {
       const settled = tradesRef.current.filter((trade) =>
         trade.accountId === account.account_id
+        && trade.createdAt >= (liveRiskCaps.sessionStartedAt ?? 0)
         && ["won", "lost", "sold", "cancelled"].includes(trade.status),
       );
       const profit = settled.reduce((sum, trade) => {
@@ -670,8 +706,8 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     submissionInFlight.current = true;
     try {
       const generation = tradeRequestGeneration.current;
-      const trade = await client.buyDigitUnder(
-        { account, symbol, barrier, stake },
+      const trade = await client.buyOneTickContract(
+        { account, symbol, contractType, barrier, stake, triggeredAt },
         () => generation === tradeRequestGeneration.current
           && socketRef.current === client
           && (account.account_type !== "real" || liveTradingArmedRef.current),
@@ -686,6 +722,17 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
       submissionInFlight.current = false;
     }
   }, [activeAccount, liveRiskCaps, liveTradingArmed, tradeConnectionStatus, updateTrade]);
+
+  const buyDigitUnder = useCallback(({ symbol, barrier, stake }: {
+    symbol: string;
+    barrier: 4 | 5;
+    stake: number;
+  }) => buyOneTickContract({
+    symbol,
+    contractType: "DIGITUNDER",
+    barrier,
+    stake,
+  }), [buyOneTickContract]);
 
   const subscribeTradeEvents = useCallback((listener: (event: DerivTradeEvent) => void) => {
     listenersRef.current.add(listener);
@@ -707,6 +754,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     armLiveTrading,
     stopAllEntries,
     setLiveRiskCaps,
+    buyOneTickContract,
     buyDigitUnder,
     subscribeTradeEvents,
   }), [
@@ -724,6 +772,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     armLiveTrading,
     stopAllEntries,
     setLiveRiskCaps,
+    buyOneTickContract,
     buyDigitUnder,
     subscribeTradeEvents,
   ]);
