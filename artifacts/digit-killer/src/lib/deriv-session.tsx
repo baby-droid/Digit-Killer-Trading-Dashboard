@@ -8,7 +8,9 @@ import {
   type ReactNode,
 } from "react";
 
-export const DEFAULT_DERIV_APP_ID = "34NPKU9CpQPBiUeK2O3S5";
+// Deriv application IDs are public identifiers, not credentials. Keep this
+// configured in code; never ask users to treat it as a password or token.
+const DERIV_APP_ID = "34NPKU9CpQPBiUeK2O3S5";
 const DERIV_REST_URL = "https://api.derivws.com";
 const REQUEST_TIMEOUT_MS = 12_000;
 
@@ -66,12 +68,11 @@ type DerivSessionValue = {
   tradeConnectionStatus: TradeConnectionStatus;
   accounts: DerivAccount[];
   activeAccount: DerivAccount | null;
-  appId: string;
   error: string | null;
   trades: DerivTradeRecord[];
   liveTradingArmed: boolean;
   liveRiskCaps: LiveRiskCaps | null;
-  connectWithPat: (input: { token: string; appId: string }) => Promise<void>;
+  connectWithPat: (input: { token: string }) => Promise<void>;
   switchAccount: (accountId: string) => Promise<void>;
   disconnect: () => void;
   armLiveTrading: (armed: boolean) => void;
@@ -387,7 +388,6 @@ const DerivSessionContext = createContext<DerivSessionValue | null>(null);
 
 export function DerivSessionProvider({ children }: { children: ReactNode }) {
   const tokenRef = useRef<string | null>(null);
-  const appIdRef = useRef(DEFAULT_DERIV_APP_ID);
   const socketRef = useRef<DerivTradingSocket | null>(null);
   const listenersRef = useRef(new Set<(event: DerivTradeEvent) => void>());
   const tradesRef = useRef<DerivTradeRecord[]>([]);
@@ -400,7 +400,6 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     useState<TradeConnectionStatus>("disconnected");
   const [accounts, setAccounts] = useState<DerivAccount[]>([]);
   const [activeAccount, setActiveAccount] = useState<DerivAccount | null>(null);
-  const [appId, setAppId] = useState(DEFAULT_DERIV_APP_ID);
   const [error, setError] = useState<string | null>(null);
   const [trades, setTrades] = useState<DerivTradeRecord[]>([]);
   const [liveTradingArmed, setLiveTradingArmed] = useState(false);
@@ -438,14 +437,9 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     updateTrade(updated, terminal);
   }, [updateTrade]);
 
-  const connectWithPat = useCallback(async ({ token, appId: requestedAppId }: {
-    token: string;
-    appId: string;
-  }) => {
+  const connectWithPat = useCallback(async ({ token }: { token: string }) => {
     const cleanToken = token.trim();
-    const cleanAppId = requestedAppId.trim();
     if (!cleanToken) throw new Error("Enter a Deriv personal access token.");
-    if (!cleanAppId) throw new Error("Enter your Deriv app ID.");
 
     const generation = ++sessionGeneration.current;
     tradeRequestGeneration.current++;
@@ -467,7 +461,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
         method: "GET",
         headers: {
           Authorization: `Bearer ${cleanToken}`,
-          "Deriv-App-ID": cleanAppId,
+          "Deriv-App-ID": DERIV_APP_ID,
         },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -483,8 +477,6 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
         throw new Error("Deriv returned no available Options Trading accounts for this token.");
       }
       tokenRef.current = cleanToken;
-      appIdRef.current = cleanAppId;
-      setAppId(cleanAppId);
       setAccounts(nextAccounts);
       setStatus("connected");
     } catch (cause) {
@@ -525,7 +517,7 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
-            "Deriv-App-ID": appIdRef.current,
+            "Deriv-App-ID": DERIV_APP_ID,
           },
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         },
@@ -705,7 +697,6 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     tradeConnectionStatus,
     accounts,
     activeAccount,
-    appId,
     error,
     trades,
     liveTradingArmed,
@@ -723,7 +714,6 @@ export function DerivSessionProvider({ children }: { children: ReactNode }) {
     tradeConnectionStatus,
     accounts,
     activeAccount,
-    appId,
     error,
     trades,
     liveTradingArmed,

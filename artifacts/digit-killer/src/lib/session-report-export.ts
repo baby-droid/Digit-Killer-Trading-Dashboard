@@ -61,15 +61,6 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-function escapeXml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
-}
-
 export async function downloadWordReport(
   rows: SessionReportRow[],
   summary: SessionReportSummary,
@@ -256,7 +247,7 @@ export function downloadPdfReport(
     pdf.setFontSize(6.5);
     pdf.setTextColor(35, 50, 58);
     rowValues(row).forEach((value, columnIndex) => {
-      const text = escapeXml(String(value)).slice(0, columnIndex === 8 ? 28 : 22);
+      const text = String(value).slice(0, columnIndex === 8 ? 28 : 22);
       pdf.text(text, xPositions[columnIndex] + 1.2, y);
     });
     y += 7;

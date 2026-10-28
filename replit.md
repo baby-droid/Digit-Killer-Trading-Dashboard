@@ -4,12 +4,20 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm install` — install workspace dependencies from the repository root
+- `pnpm --filter @workspace/digit-killer run dev:local` — run Digit Killer at `http://localhost:5000` and open it in the local browser
+- The Replit preview uses the managed `artifacts/digit-killer: web` service; start/restart that service to open the app in Replit
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080 in Replit; requires `DATABASE_URL`)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+
+## Deriv credential handling
+
+- The PAT is held in browser memory only and cleared on disconnect or page reload. Requests to Deriv use HTTPS/WSS.
+- The Deriv App ID is a public identifier, not a credential. It is no longer shown in the connection form, but remains discoverable in the frontend bundle and requests to Deriv; do not describe it as secret or encrypted at rest.
 
 ## Stack
 

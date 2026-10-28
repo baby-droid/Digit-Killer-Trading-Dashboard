@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck, Unplug, WalletCards, KeyRound, AlertTriangle } from "lucide-react";
-import { DEFAULT_DERIV_APP_ID, useDerivSession } from "@/lib/deriv-session";
+import { useDerivSession } from "@/lib/deriv-session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export function DerivAccountCard() {
   const session = useDerivSession();
   const [token, setToken] = useState("");
-  const [appId, setAppId] = useState(session.appId || DEFAULT_DERIV_APP_ID);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [preferDemo, setPreferDemo] = useState(false);
@@ -27,7 +26,7 @@ export function DerivAccountCard() {
     setBusy(true);
     setError("");
     try {
-      await session.connectWithPat({ token: token.trim(), appId: appId.trim() || DEFAULT_DERIV_APP_ID });
+      await session.connectWithPat({ token: token.trim() });
       setToken("");
       setPreferDemo(true);
     } catch (caught) {
@@ -46,7 +45,7 @@ export function DerivAccountCard() {
           <div className="grid h-9 w-9 place-items-center rounded-lg border border-primary/25 bg-primary/10 text-primary"><WalletCards className="h-4 w-4" /></div>
           <div>
             <h2 className="text-sm font-bold">Deriv trading account</h2>
-            <p className="text-xs text-muted-foreground">PAT access stays in memory for this session only.</p>
+            <p className="text-xs text-muted-foreground">PAT stays in memory; Deriv connections use encrypted HTTPS/WSS.</p>
           </div>
         </div>
         <span data-testid="status-deriv-connection" className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${connected ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" : "border-border bg-muted text-muted-foreground"}`}>
@@ -97,12 +96,8 @@ export function DerivAccountCard() {
               <label htmlFor="deriv-pat" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Personal Access Token</label>
               <Input id="deriv-pat" type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Paste PAT — never saved" data-testid="input-deriv-pat" />
             </div>
-            <div>
-              <label htmlFor="deriv-app-id" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Deriv App ID</label>
-              <Input id="deriv-app-id" value={appId} onChange={(event) => setAppId(event.target.value)} data-testid="input-deriv-app-id" />
-            </div>
             <Button disabled={!token.trim() || busy} className="w-full" data-testid="button-deriv-connect">{busy ? "Connecting…" : "Connect Deriv account"}</Button>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">Token is held only in memory and cleared when disconnected or the page session ends.</p>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">Your token is sent to Deriv over HTTPS, never saved by this app, and cleared when disconnected or the page session ends.</p>
           </form>
         )}
       </div>
